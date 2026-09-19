@@ -9437,97 +9437,126 @@ void DrawSaveManager(bool live = false) {
     }
 }
 
-void DrawAudioSettings(float width) {
-    const float control_width = std::min(width, 720.0F);
-    float master = dkr::runtime::platform::master_volume() * 100.0F;
-    ImGui::TextUnformatted("Master volume");
-    ImGui::SetNextItemWidth(control_width);
-    if (ControlSliderFloat("##audio-master", &master, 0.0F, 100.0F,
-                           "%.0f%%", ImGuiSliderFlags_AlwaysClamp)) {
-        dkr::runtime::platform::set_master_volume(master / 100.0F);
-        SaveSettings();
-    }
-    if (!dkr::runtime::enhancements::modern_options_visible(
-            dkr::runtime::enhancements::presentation_profile())) {
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, {0.055F, 0.19F, 0.29F, 1.0F});
-        BeginPaddedChild("accurate-audio-lock", {control_width, 104.0F}, true,
-                         ImGuiWindowFlags_NoScrollbar, {18.0F, 15.0F});
-        ImGui::PushTextWrapPos(std::max(control_width - 18.0F, 1.0F));
-        ImGui::TextUnformatted("Original island mix - Accurate");
-        ImGui::TextWrapped("Music, effects, vehicles and EQ stay at their authored values. Master volume remains available.");
-        ImGui::PopTextWrapPos();
-        ImGui::EndChild();
-        ImGui::PopStyleColor();
-        return;
-    }
+// One of the Sound page's panels, drawn like tools/launcher-html's .card:
+// 18 x 20 px of padding inside a 2 px border, 18 px corners.
+template <typename Content>
+void DrawSoundCard(float width, Content&& content) {
+    PaddockBox box(width, {22.0F, 20.0F});
+    const float inner = box.Inner();
+    ImGui::PushItemWidth(inner);
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + inner);
+    content(inner);
+    ImGui::PopTextWrapPos();
+    ImGui::PopItemWidth();
+    box.End([](ImDrawList* draw, ImVec2 a, ImVec2 b) {
+        PaddockPanel(draw, a, b,
+                     {PaddockRound(18.0F), PaddockRgb(0x0B2E40, 245U),
+                      PaddockRgb(0x296B70), 2.0F});
+    });
+}
 
-    ImGui::Spacing();
-    ImGui::SeparatorText("Island mix");
-    const auto volume_slider = [&](const char* label, const char* id,
-                                   float value, auto setter) {
+void DrawSoundNote(std::string_view text, float width) {
+    PaddockText(PaddockReading(14.0F, false, 1.45F), PaddockRgb(0xB0C9CC),
+                text, width);
+}
+
+void DrawAudioSettings(float width) {
+    const float card_width = std::min(width, 720.0F);
+    const auto volume_slider = [](const char* label, const char* id,
+                                  float value, auto setter) {
         float percent = value * 100.0F;
         ImGui::TextUnformatted(label);
-        ImGui::SetNextItemWidth(control_width);
         if (ControlSliderFloat(id, &percent, 0.0F, 100.0F, "%.0f%%",
                                ImGuiSliderFlags_AlwaysClamp)) {
             setter(percent / 100.0F);
             SaveSettings();
         }
     };
-    volume_slider("Music", "##audio-music", dkr::runtime::audio::music_volume(),
-                  dkr::runtime::audio::set_music_volume);
-    volume_slider("Sound effects", "##audio-effects",
-                  dkr::runtime::audio::sound_effects_volume(),
-                  dkr::runtime::audio::set_sound_effects_volume);
-    volume_slider("Vehicle sounds", "##audio-vehicles",
-                  dkr::runtime::audio::vehicle_volume(),
-                  dkr::runtime::audio::set_vehicle_volume);
-    volume_slider("Nature and ambience", "##audio-nature",
-                  dkr::runtime::audio::nature_volume(),
-                  dkr::runtime::audio::set_nature_volume);
+    const bool modern = dkr::runtime::enhancements::modern_options_visible(
+        dkr::runtime::enhancements::presentation_profile());
 
-    if (dkr::runtime::enhancements::modern_options_visible(
-            dkr::runtime::enhancements::presentation_profile())) {
+    DrawSoundCard(card_width, [&](float) {
+        volume_slider("Master volume", "##audio-master",
+                      dkr::runtime::platform::master_volume(),
+                      dkr::runtime::platform::set_master_volume);
+        if (!modern) return;
+        volume_slider("Music volume", "##audio-music",
+                      dkr::runtime::audio::music_volume(),
+                      dkr::runtime::audio::set_music_volume);
+        volume_slider("Sound effects volume", "##audio-effects",
+                      dkr::runtime::audio::sound_effects_volume(),
+                      dkr::runtime::audio::set_sound_effects_volume);
+        volume_slider("Vehicle sounds volume", "##audio-vehicles",
+                      dkr::runtime::audio::vehicle_volume(),
+                      dkr::runtime::audio::set_vehicle_volume);
+        volume_slider("Nature and ambience volume", "##audio-nature",
+                      dkr::runtime::audio::nature_volume(),
+                      dkr::runtime::audio::set_nature_volume);
+    });
+
+    if (!modern) {
+        DrawSoundCard(card_width, [](float inner) {
+            ImGui::TextUnformatted("Original island mix - Accurate");
+            DrawSoundNote("Music, effects, vehicles and EQ stay at their authored values. Master volume remains available.",
+                          inner);
+        });
+        return;
+    }
+
+    DrawSoundCard(card_width, [](float) {
+        ImGui::PushStyleColor(ImGuiCol_Text, kWarm);
+        ImGui::TextUnformatted("Three-band EQ");
+        ImGui::PopStyleColor();
+        const auto eq_slider = [](const char* label, const char* id,
+                                  float value, auto setter) {
+            ImGui::TextUnformatted(label);
+            if (ControlSliderFloat(id, &value, -12.0F, 12.0F, "%+.1f dB",
+                                   ImGuiSliderFlags_AlwaysClamp)) {
+                setter(value);
+                SaveSettings();
+            }
+        };
+        eq_slider("Bass", "##audio-bass", dkr::runtime::platform::bass_gain(),
+                  dkr::runtime::platform::set_bass_gain);
+        eq_slider("Mid", "##audio-mid", dkr::runtime::platform::mid_gain(),
+                  dkr::runtime::platform::set_mid_gain);
+        eq_slider("Treble", "##audio-treble",
+                  dkr::runtime::platform::treble_gain(),
+                  dkr::runtime::platform::set_treble_gain);
+    });
+
+    DrawSoundCard(card_width, [](float inner) {
         bool multiplayer_race_music =
             dkr::runtime::enhancements::multiplayer_race_music_requested();
+        // The mockup's checkbox keeps 12 px between the box and its label.
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, {12.0F, 4.0F});
+        const float label_x = ImGui::GetFrameHeight() + 12.0F;
         if (ImGui::Checkbox("Restore race music for 3-4 players",
                             &multiplayer_race_music)) {
             dkr::runtime::enhancements::set_multiplayer_race_music_enabled(
                 multiplayer_race_music);
             SaveSettings();
         }
-        ImGui::TextDisabled(
-            "Restores the level soundtrack removed by the original 3-4 player hardware mode.");
-    }
-
-    ImGui::Spacing();
-    ImGui::SeparatorText("Three-band EQ");
-    const auto eq_slider = [&](const char* label, const char* id,
-                               float value, auto setter) {
-        ImGui::TextUnformatted(label);
-        ImGui::SetNextItemWidth(control_width);
-        if (ControlSliderFloat(id, &value, -12.0F, 12.0F, "%+.1f dB",
-                               ImGuiSliderFlags_AlwaysClamp)) {
-            setter(value);
+        ImGui::PopStyleVar();
+        // The note sits under the checkbox label, closer to it than to the button.
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 6.0F);
+        ImGui::Indent(label_x);
+        DrawSoundNote("Restores the level soundtrack removed by the original 3-4 player hardware mode.",
+                      std::max(inner - label_x, 1.0F));
+        ImGui::Unindent(label_x);
+        ImGui::PushStyleColor(ImGuiCol_Button, {0.92F, 0.43F, 0.06F, 1.0F});
+        if (ImGui::Button("RESTORE ORIGINAL MIX", {0.0F, 43.0F})) {
+            dkr::runtime::audio::set_music_volume(1.0F);
+            dkr::runtime::audio::set_sound_effects_volume(1.0F);
+            dkr::runtime::audio::set_vehicle_volume(1.0F);
+            dkr::runtime::audio::set_nature_volume(1.0F);
+            dkr::runtime::platform::set_bass_gain(0.0F);
+            dkr::runtime::platform::set_mid_gain(0.0F);
+            dkr::runtime::platform::set_treble_gain(0.0F);
             SaveSettings();
         }
-    };
-    eq_slider("Bass", "##audio-bass", dkr::runtime::platform::bass_gain(),
-              dkr::runtime::platform::set_bass_gain);
-    eq_slider("Mid", "##audio-mid", dkr::runtime::platform::mid_gain(),
-              dkr::runtime::platform::set_mid_gain);
-    eq_slider("Treble", "##audio-treble", dkr::runtime::platform::treble_gain(),
-              dkr::runtime::platform::set_treble_gain);
-    if (ImGui::Button("RESTORE ORIGINAL MIX", {control_width, 44.0F})) {
-        dkr::runtime::audio::set_music_volume(1.0F);
-        dkr::runtime::audio::set_sound_effects_volume(1.0F);
-        dkr::runtime::audio::set_vehicle_volume(1.0F);
-        dkr::runtime::audio::set_nature_volume(1.0F);
-        dkr::runtime::platform::set_bass_gain(0.0F);
-        dkr::runtime::platform::set_mid_gain(0.0F);
-        dkr::runtime::platform::set_treble_gain(0.0F);
-        SaveSettings();
-    }
+        ImGui::PopStyleColor();
+    });
 }
 
 std::string ShortcutBindingName(CaptureDevice device,
@@ -11376,8 +11405,6 @@ dkr::runtime::ui::StartupResult dkr::runtime::ui::run_startup_screen(
             DrawGraphicsSettings(false);
         } else if (page == 2) {
             DrawPageHeading("SOUND");
-            ImGui::TextDisabled("Balance music, vehicles, effects and island ambience.");
-            ImGui::Dummy({0.0F, 18.0F});
             DrawAudioSettings(right_inner_width);
         } else if (page == 3) {
             DrawPageHeading("CONTROLS");
